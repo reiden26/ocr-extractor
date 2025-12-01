@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Procesamiento de facturas</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #ffffff;
+        --fg: #111827;
+        --fg-muted: #4b5563;
+        --border: #e5e7eb;
+        --accent: #111827;
+        --accent-soft: #f3f4f6;
+        --error: #b91c1c;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          sans-serif;
+        background: var(--bg);
+        color: var(--fg);
+      }
+      .app-shell {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 24px 16px 80px;
+        display: flex;
+        gap: 24px;
+      }
+      header {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 16px;
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      header h1 {
+        font-size: 20px;
+        font-weight: 600;
+      }
+      header span {
+        font-size: 13px;
+        color: var(--fg-muted);
+      }
+      .main-panel {
+        flex: 2;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+      .side-panel {
+        flex: 1.2;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+      .card {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 16px 18px;
+        background: #ffffff;
+      }
+      .card h2 {
+        font-size: 16px;
+        font-weight: 600;
+        margin-bottom: 8px;
+      }
+      .card p {
+        font-size: 13px;
+        color: var(--fg-muted);
+        margin-bottom: 8px;
+      }
+      .upload-area {
+        border: 1px dashed var(--border);
+        border-radius: 8px;
+        padding: 18px;
+        text-align: center;
+        cursor: pointer;
+        position: relative;
+        overflow: hidden;
+      }
+      .upload-area:focus,
+      .upload-area:active {
+        outline: none;
+      }
+      .upload-area::before,
+      .upload-area::after {
+        content: none !important;
+      }
+      .upload-area:hover {
+        background: var(--accent-soft);
+      }
+      .upload-area input {
+        position: absolute;
+        inset: 0;
+        opacity: 0;
+        cursor: pointer;
+      }
+      .tag {
+        display: inline-flex;
+        align-items: center;
+        padding: 2px 8px;
+        border-radius: 999px;
+        font-size: 11px;
+        background: var(--accent-soft);
+        color: var(--fg-muted);
+        margin-right: 4px;
+      }
+      button.primary {
+        padding: 8px 14px;
+        border-radius: 6px;
+        border: 1px solid var(--accent);
+        background: var(--accent);
+        color: white;
+        font-size: 13px;
+        cursor: pointer;
+      }
+      button.primary:disabled {
+        opacity: 0.6;
+        cursor: default;
+      }
+      .status {
+        font-size: 13px;
+        margin-top: 4px;
+      }
+      .status.ok {
+        color: #166534;
+      }
+      .status.error {
+        color: var(--error);
+      }
+      .success-icon {
+        color: #16a34a;
+        font-size: 18px;
+      }
+      .spinner {
+        display: inline-block;
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        border: 2px solid #bbf7d0;
+        border-top-color: #16a34a;
+        animation: spin 0.7s linear infinite;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      .json-view {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+          "Liberation Mono", "Courier New", monospace;
+        font-size: 12px;
+        background: #f9fafb;
+        border-radius: 6px;
+        padding: 10px;
+        max-height: 260px;
+        overflow: auto;
+        white-space: pre;
+      }
+      .metrics-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px 16px;
+        font-size: 13px;
+      }
+      .metric-label {
+        color: var(--fg-muted);
+      }
+      .metric-value {
+        font-weight: 500;
+      }
+      /* Chat flotante */
+      .chat-fab {
+        position: fixed;
+        right: 24px;
+        bottom: 24px;
+        width: 56px;
+        height: 56px;
+        border-radius: 50%;
+        border: 1px solid var(--border);
+        background: #ffffff;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        box-shadow: 0 6px 18px rgba(15, 23, 42, 0.25);
+        font-size: 24px;
+      }
+      .chat-fab:hover {
+        box-shadow: 0 10px 24px rgba(15, 23, 42, 0.35);
+        transform: translateY(-1px);
+      }
+      .chat-window {
+        position: fixed;
+        right: 24px;
+        bottom: 92px;
+        width: 340px;
+        max-height: 460px;
+        background: #ffffff;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        box-shadow: 0 12px 30px rgba(15, 23, 42, 0.35);
+        display: none;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      .chat-header {
+        padding: 10px 14px;
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-size: 14px;
+        font-weight: 600;
+      }
+      .chat-header span {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .chat-header button {
+        background: transparent;
+        border: none;
+        cursor: pointer;
+        font-size: 16px;
+        color: var(--fg-muted);
+      }
+      .chat-messages {
+        padding: 10px;
+        overflow-y: auto;
+        flex: 1;
+        font-size: 13px;
+        background: #f9fafb;
+      }
+      .msg-user {
+        background: #111827;
+        color: #ffffff;
+        padding: 6px 8px;
+        border-radius: 10px;
+        margin-bottom: 6px;
+        margin-left: 40px;
+        max-width: 230px;
+      }
+      .msg-bot {
+        background: #ffffff;
+        border: 1px solid var(--border);
+        padding: 6px 8px;
+        border-radius: 10px;
+        margin-bottom: 6px;
+        margin-right: 40px;
+        max-width: 230px;
+      }
+      .chat-input {
+        padding: 8px;
+        border-top: 1px solid var(--border);
+        display: flex;
+        gap: 6px;
+        background: #ffffff;
+      }
+      .chat-input input {
+        flex: 1;
+        padding: 6px 8px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        font-size: 13px;
+      }
+      .chat-input button {
+        padding: 6px 10px;
+        border-radius: 6px;
+        border: 1px solid var(--accent);
+        background: var(--accent);
+        color: white;
+        font-size: 13px;
+        cursor: pointer;
+      }
+      @media (max-width: 900px) {
+        .app-shell {
+          flex-direction: column;
+        }
+        .chat-window {
+          right: 12px;
+          bottom: 80px;
+          width: calc(100% - 24px);
+          max-width: 420px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div>
+        <h1>Intelli-Invoice Extractor</h1>
+        <span>OCR + IA local sobre facturas, todo en tu máquina</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 12px;">
+        <span id="user-info" style="font-size: 13px; color: var(--fg-muted);"></span>
+        <button onclick="logout()" style="padding: 6px 12px; font-size: 12px; border: 1px solid var(--border); background: transparent; border-radius: 6px; cursor: pointer; color: var(--fg-muted);">Cerrar sesión</button>
+      </div>
+    </header>
+    <main class="app-shell">
+      <section class="main-panel">
+        <div class="card">
+          <h2>Sube una factura</h2>
+          <p>Formatos soportados: PDF, JPG, JPEG, PNG.</p>
+          <div class="upload-area" id="upload-label">
+            <input id="file-input" type="file" accept=".pdf,.png,.jpg,.jpeg" />
+            <div id="upload-placeholder" style="font-size: 14px; margin-bottom: 4px">
+              Arrastra y suelta un archivo aquí o haz clic para seleccionar
+            </div>
+            <div id="file-selected" style="display: none; font-size: 14px; margin-bottom: 4px; font-weight: 500;">
+              <span id="file-name"></span>
+              <button type="button" onclick="clearFile()" style="margin-left: 8px; padding: 2px 6px; font-size: 11px; border: 1px solid var(--border); background: transparent; border-radius: 4px; cursor: pointer; color: var(--fg-muted);">✕</button>
+            </div>
+            <div style="font-size: 12px; color: var(--fg-muted)">
+              Límite 200MB por archivo · Procesado localmente
+            </div>
+          </div>
+          <div style="margin-top: 10px; display: flex; gap: 8px; align-items: center">
+            <button id="process-btn" class="primary" disabled>
+              Procesar factura
+            </button>
+            <span id="status" class="status"></span>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>Datos clave</h2>
+          <div id="metrics" class="metrics-grid">
+            <div>
+              <div class="metric-label">Número de factura</div>
+              <div class="metric-value" id="m-invoice">—</div>
+            </div>
+            <div>
+              <div class="metric-label">Fecha</div>
+              <div class="metric-value" id="m-date">—</div>
+            </div>
+            <div>
+              <div class="metric-label">Emisor de la factura</div>
+              <div class="metric-value" id="m-supplier">—</div>
+            </div>
+            <div>
+              <div class="metric-label">Total</div>
+              <div class="metric-value" id="m-total">—</div>
+            </div>
+            <div id="extra-metrics" style="grid-column: 1 / -1; display: flex; flex-direction: column; gap: 4px; margin-top: 4px;"></div>
+          </div>
+        </div>
+      </section>
+
+      <aside class="side-panel">
+        <div class="card">
+          <h2>JSON estructurado</h2>
+          <p>Vista del JSON refinado (si está disponible) o inicial.</p>
+          <div id="json-view" class="json-view">{}</div>
+        </div>
+        <div class="card">
+          <h2>Texto OCR</h2>
+          <p>Fragmento del texto OCR completo.</p>
+          <div id="ocr-preview" class="json-view"></div>
+        </div>
+      </aside>
+    </main>
+
+    <!-- Chat flotante -->
+    <div id="chat-window" class="chat-window">
+      <div class="chat-header">
+        <span>💬 Intelli-Invoice</span>
+        <button onclick="toggleChat(false)">✕</button>
+      </div>
+      <div id="chat-messages" class="chat-messages">
+        <div class="msg-bot">
+          Estoy listo para responder preguntas sobre la última factura procesada.
+        </div>
+      </div>
+      <div class="chat-input">
+        <input
+          id="chat-input"
+          type="text"
+          placeholder="Escribe tu pregunta..."
+        />
+        <button onclick="sendChat()">Enviar</button>
+      </div>
+    </div>
+    <div class="chat-fab" onclick="toggleChat(true)">💬</div>
+
+    <script>
+      // Verificar autenticación al cargar
+      const authToken = localStorage.getItem("auth_token");
+      const username = localStorage.getItem("username");
+      
+      if (!authToken) {
+        window.location.href = "/login.html";
+      }
+      
+      // Mostrar información del usuario
+      document.getElementById("user-info").textContent = `Usuario: ${username || "Desconocido"}`;
+      
+      function getAuthHeaders() {
+        const token = localStorage.getItem("auth_token");
+        return {
+          "Authorization": `Bearer ${token}`,
+        };
+      }
+      
+      function logout() {
+        localStorage.removeItem("auth_token");
+        localStorage.removeItem("username");
+        window.location.href = "/login.html";
+      }
+      
+      const statusEl = document.getElementById("status");
+      const fileInput = document.getElementById("file-input");
+      const processBtn = document.getElementById("process-btn");
+      const jsonView = document.getElementById("json-view");
+      const ocrPreview = document.getElementById("ocr-preview");
+      const chatMessages = document.getElementById("chat-messages");
+      const chatInput = document.getElementById("chat-input");
+
+      let lastRawText = null;
+      let lastDataInitial = null;
+      let lastDataRefined = null;
+
+      function clearFile() {
+        fileInput.value = "";
+        document.getElementById("upload-placeholder").style.display = "block";
+        document.getElementById("file-selected").style.display = "none";
+        processBtn.disabled = true;
+      }
+
+      fileInput.addEventListener("change", () => {
+        const hasFile = fileInput.files.length > 0;
+        processBtn.disabled = !hasFile;
+        
+        if (hasFile) {
+          const fileName = fileInput.files[0].name;
+          document.getElementById("upload-placeholder").style.display = "none";
+          document.getElementById("file-selected").style.display = "block";
+          document.getElementById("file-name").textContent = fileName;
+        } else {
+          document.getElementById("upload-placeholder").style.display = "block";
+          document.getElementById("file-selected").style.display = "none";
+        }
+      });
+
+      processBtn.addEventListener("click", async () => {
+        if (!fileInput.files.length) return;
+        const file = fileInput.files[0];
+
+        statusEl.className = "status";
+        statusEl.innerHTML = '<span class="spinner"></span>';
+        processBtn.disabled = true;
+
+        const form = new FormData();
+        form.append("file", file);
+        form.append("refine", "true");
+        form.append("save_db", "false");
+
+        try {
+          const resp = await fetch("/api/process-invoice", {
+            method: "POST",
+            headers: getAuthHeaders(),
+            body: form,
+          });
+          if (!resp.ok) {
+            if (resp.status === 401) {
+              logout();
+              return;
+            }
+            const t = await resp.text();
+            throw new Error(t || "Error HTTP " + resp.status);
+          }
+          const data = await resp.json();
+          lastRawText = data.raw_text;
+          lastDataInitial = data.data_initial;
+          lastDataRefined = data.data_refined;
+
+          const toShow = lastDataRefined || lastDataInitial || {};
+          jsonView.textContent = JSON.stringify(toShow, null, 2);
+
+          const snippet =
+            (lastRawText || "").slice(0, 1200) +
+            ((lastRawText || "").length > 1200 ? "…" : "");
+          ocrPreview.textContent = snippet || "—";
+
+          document.getElementById("m-invoice").textContent =
+            toShow.invoice_number || "—";
+          document.getElementById("m-date").textContent = toShow.date || "—";
+          document.getElementById("m-supplier").textContent =
+            toShow.supplier || "—";
+          document.getElementById("m-total").textContent =
+            toShow.total != null ? String(toShow.total) : "—";
+
+          // Métricas extra dinámicas basadas en lo que devuelva el modelo
+          const extraContainer = document.getElementById("extra-metrics");
+          extraContainer.innerHTML = "";
+          const mainKeys = ["invoice_number", "date", "supplier", "total", "raw_text"];
+          Object.entries(toShow).forEach(([key, value]) => {
+            if (value === null || value === "" || mainKeys.includes(key)) return;
+            // Evitar duplicar la fecha si ya está en la parte superior
+            if (key === "billing_period" && toShow.date) return;
+
+            const row = document.createElement("div");
+            row.style.display = "flex";
+            row.style.justifyContent = "space-between";
+            row.style.gap = "8px";
+
+            const label = document.createElement("div");
+            label.className = "metric-label";
+            const niceKey =
+              metricLabelsEs[key] ||
+              key
+                .replace(/_/g, " ")
+                .replace(/\b\w/g, (c) => c.toUpperCase());
+            label.textContent = niceKey;
+
+            const val = document.createElement("div");
+            val.className = "metric-value";
+            val.textContent = String(value);
+
+            row.appendChild(label);
+            row.appendChild(val);
+            extraContainer.appendChild(row);
+          });
+
+          statusEl.className = "status ok";
+          statusEl.innerHTML = "<span class='success-icon'>✓</span>";
+        } catch (e) {
+          console.error(e);
+          statusEl.className = "status error";
+          statusEl.innerHTML = "⚠️";
+        } finally {
+          processBtn.disabled = false;
+        }
+      });
+
+      function toggleChat(open) {
+        const win = document.getElementById("chat-window");
+        win.style.display = open ? "flex" : "none";
+      }
+
+      function appendChat(text, cls) {
+        const div = document.createElement("div");
+        div.className = cls;
+        div.textContent = text;
+        chatMessages.appendChild(div);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+      }
+
+      async function sendChat() {
+        const q = chatInput.value.trim();
+        if (!q) return;
+        if (!lastRawText || !lastDataInitial) {
+          appendChat(
+            "Primero procesa una factura para poder hacer preguntas.",
+            "msg-bot"
+          );
+          return;
+        }
+        appendChat(q, "msg-user");
+        chatInput.value = "";
+        try {
+          appendChat("Pensando...", "msg-bot");
+          const resp = await fetch("/api/chat", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...getAuthHeaders(),
+            },
+            body: JSON.stringify({
+              question: q,
+              raw_text: lastRawText,
+              data_structured: lastDataRefined || lastDataInitial,
+            }),
+          });
+          if (!resp.ok) {
+            if (resp.status === 401) {
+              logout();
+              return;
+            }
+            throw new Error("Error HTTP " + resp.status);
+          }
+          const data = await resp.json();
+          chatMessages.removeChild(chatMessages.lastChild);
+          appendChat(data.answer || "Sin respuesta.", "msg-bot");
+        } catch (e) {
+          appendChat("Error al llamar al chat: " + e.message, "msg-bot");
+        }
+      }
+
+      chatInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          sendChat();
+        }
+      });
+
+      // --- Utilidades para etiquetas en español de métricas extra ---
+      const metricLabelsEs = {
+        subtotal: "Subtotal",
+        tax: "Impuesto",
+        currency: "Moneda",
+        payment_terms: "Condiciones de pago",
+        contract_number: "Número de contrato",
+        billing_period: "Período de facturación",
+        customer_name: "Nombre del cliente",
+        address: "Dirección",
+        service_name: "Servicio",
+        document_title: "Título del documento",
+      };
+    </script>
+  </body>
+</html>
+
+

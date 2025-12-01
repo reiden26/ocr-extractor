@@ -1,4 +1,3 @@
-cat > requirements.txt <<EOF
 pillow
 pytesseract
 pdf2image
@@ -7,9 +6,12 @@ spacy
 scikit-learn
 sqlalchemy
 python-dotenv
-flask             # o streamlit, si prefieres interfaz rápida
-python-multipart  # si usas FastAPI (opcional)
-gunicorn          # para despliegue
-EOF
-
-pip install -r requirements.txt
+streamlit
+python-multipart
+gunicorn
+requests
+fastapi
+uvicorn[standard]
+python-jose[cryptography]
+bcrypt
+python-multipart
