@@ -1,0 +1,15 @@
+cat > requirements.txt <<EOF
+pillow
+pytesseract
+pdf2image
+pandas
+spacy
+scikit-learn
+sqlalchemy
+python-dotenv
+flask             # o streamlit, si prefieres interfaz rápida
+python-multipart  # si usas FastAPI (opcional)
+gunicorn          # para despliegue
+EOF
+
+pip install -r requirements.txt
