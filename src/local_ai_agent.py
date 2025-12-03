@@ -1,6 +1,6 @@
 import os
 import json
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 import requests
 
@@ -50,7 +50,7 @@ def _chat(messages, temperature: float = 0.2, max_tokens: int = 1024) -> str:
         raise LocalAIAgentError(f"Formato de respuesta inesperado de LM Studio: {e} - {data}")
 
 
-def extraer_datos_con_ia(raw_text: str) -> Dict[str, Any]:
+def extraer_datos_con_ia(raw_text: str, historial_usuario: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     """
     Extrae TODOS los datos de la factura directamente del texto OCR usando el modelo.
     Esta es la función principal que debe usarse para determinar los campos.
@@ -68,12 +68,36 @@ def extraer_datos_con_ia(raw_text: str) -> Dict[str, Any]:
         "Responde ÚNICAMENTE con un JSON válido, sin texto adicional."
     )
 
+    # Construir contexto histórico si está disponible
+    contexto_historico = ""
+    if historial_usuario and len(historial_usuario) > 0:
+        contexto_historico = (
+            "\n\nCONTEXTO: Facturas anteriores procesadas por este usuario:\n"
+            "============================================================\n"
+        )
+        for i, fact in enumerate(historial_usuario[:3], 1):  # Máximo 3 ejemplos
+            contexto_historico += (
+                f"\nEjemplo {i}:\n"
+                f"- Número: {fact.get('invoice_number', 'N/A')}\n"
+                f"- Emisor: {fact.get('supplier', 'N/A')}\n"
+                f"- Fecha: {fact.get('date', 'N/A')}\n"
+            )
+            if fact.get('data'):
+                contexto_historico += f"- Datos extraídos: {json.dumps(fact['data'], ensure_ascii=False, indent=2)}\n"
+        contexto_historico += (
+            "\nUsa estos ejemplos como referencia para entender el formato y estilo "
+            "de las facturas que este usuario suele procesar. Si encuentras patrones similares, "
+            "aplica la misma lógica de extracción.\n"
+        )
+
     user_prompt = (
         "Texto OCR completo de la factura:\n"
         "================================\n"
-        f"{raw_text}\n\n"
+        f"{raw_text}\n"
+        f"{contexto_historico}\n"
         "Analiza este texto y extrae TODOS los campos de la factura. "
-        "Busca en cualquier parte del documento: encabezados, pies de página, secciones intermedias, etc.\n\n"
+        "Busca en cualquier parte del documento: encabezados, pies de página, secciones intermedias, etc. "
+        "Si tienes contexto de facturas anteriores del mismo usuario, úsalo para mejorar la precisión.\n\n"
         "Devuelve un JSON con al menos estos campos (puedes añadir más si lo consideras importante):\n"
         "{\n"
         '  "invoice_number": string | null,        // Número de factura, puede estar como "FACTURA N°", "NÚMERO", "NO.", etc.\n'
@@ -204,6 +228,7 @@ def responder_pregunta_sobre_factura(
     raw_text: str,
     data_estructurada: Dict[str, Any],
     pregunta: str,
+    historial_usuario: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
     """
     Permite hacer preguntas en lenguaje natural sobre una factura concreta.
@@ -211,17 +236,56 @@ def responder_pregunta_sobre_factura(
     """
     system_prompt = (
         "Eres un asistente que responde preguntas sobre facturas usando ÚNICAMENTE "
-        "la información proporcionada (texto OCR y datos estructurados). "
-        "Si no encuentras la respuesta en la factura, di claramente que no estás seguro. "
+        "la información proporcionada (texto OCR, datos estructurados y/o historial de facturas del usuario). "
+        "Puedes responder sobre la factura actual que el usuario está procesando, "
+        "o sobre facturas anteriores que el usuario haya procesado previamente. "
+        "Si no encuentras la respuesta en la información disponible, di claramente que no estás seguro. "
         "Responde siempre en español."
     )
 
-    context = (
-        "Datos estructurados de la factura:\n"
-        f"{json.dumps(data_estructurada, ensure_ascii=False, indent=2)}\n\n"
-        "Texto OCR completo:\n"
-        f"{raw_text}\n"
-    )
+    # Añadir contexto histórico si está disponible
+    contexto_historico = ""
+    if historial_usuario and len(historial_usuario) > 0:
+        contexto_historico = (
+            "\n\nCONTEXTO: Facturas anteriores del mismo usuario:\n"
+            "==================================================\n"
+        )
+        for i, fact in enumerate(historial_usuario[:2], 1):
+            contexto_historico += (
+                f"\nFactura anterior {i}:\n"
+                f"- Número: {fact.get('invoice_number', 'N/A')}\n"
+                f"- Emisor: {fact.get('supplier', 'N/A')}\n"
+                f"- Fecha: {fact.get('date', 'N/A')}\n"
+            )
+            if fact.get('data'):
+                contexto_historico += f"- Datos: {json.dumps(fact['data'], ensure_ascii=False, indent=2)}\n"
+        contexto_historico += (
+            "\nUsa este contexto para dar respuestas más precisas y consistentes "
+            "con el historial del usuario.\n"
+        )
+
+    # Construir contexto según lo que tengamos disponible
+    if raw_text and data_estructurada:
+        context = (
+            "Datos estructurados de la factura actual:\n"
+            f"{json.dumps(data_estructurada, ensure_ascii=False, indent=2)}\n\n"
+            "Texto OCR completo de la factura actual:\n"
+            f"{raw_text}\n"
+            f"{contexto_historico}"
+        )
+    elif historial_usuario and len(historial_usuario) > 0:
+        # Si no hay factura actual, usar el historial
+        context = (
+            "El usuario está preguntando sobre sus facturas anteriores.\n"
+            f"{contexto_historico}\n\n"
+            "Usa esta información para responder la pregunta del usuario sobre sus facturas procesadas anteriormente."
+        )
+    else:
+        context = (
+            "Datos disponibles:\n"
+            f"{json.dumps(data_estructurada, ensure_ascii=False, indent=2)}\n"
+            f"{raw_text if raw_text else 'Sin texto OCR disponible'}\n"
+        )
 
     user_prompt = (
         "Contexto de la factura:\n"

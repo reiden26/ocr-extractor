@@ -4,10 +4,11 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from jose import JWTError, jwt
 from datetime import datetime, timedelta
 import bcrypt
+import json
 
 from .ocr_utils import ocr_file
 from .extractor import extract_invoice_data
@@ -31,8 +32,8 @@ security = HTTPBearer()
 
 class ChatRequest(BaseModel):
     question: str
-    raw_text: str
-    data_structured: Dict[str, Any]
+    raw_text: Optional[str] = None
+    data_structured: Optional[Dict[str, Any]] = None
 
 
 class RegisterRequest(BaseModel):
@@ -185,22 +186,89 @@ async def get_current_user_info(current_user: User = Depends(get_current_user)):
     return {"username": current_user.username, "id": current_user.id}
 
 
+def get_user_invoice_history(user_id: int, limit: int = 5) -> List[Dict[str, Any]]:
+    """
+    Obtiene las últimas facturas procesadas por el usuario para usar como contexto.
+    Esto permite que el modelo 'aprenda' de facturas anteriores del mismo usuario.
+    """
+    db = SessionLocal()
+    try:
+        invoices = db.query(Invoice).filter(
+            Invoice.user_id == user_id
+        ).order_by(Invoice.created_at.desc()).limit(limit).all()
+        
+        history = []
+        for inv in invoices:
+            try:
+                data = json.loads(inv.data_complete) if inv.data_complete else {}
+            except:
+                data = {}
+            # Asegurar que el raw_text esté en los datos
+            if inv.raw_text_ocr and 'raw_text' not in data:
+                data['raw_text'] = inv.raw_text_ocr
+            history.append({
+                "invoice_number": inv.invoice_number,
+                "supplier": inv.supplier,
+                "date": inv.date,
+                "data": data,
+                "raw_text_ocr": inv.raw_text_ocr or "",
+                "created_at": inv.created_at.isoformat() if inv.created_at else None,
+            })
+        return history
+    finally:
+        db.close()
+
+
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(
     req: ChatRequest,
     current_user: User = Depends(get_current_user)
 ):
     """
-    Endpoint que usa la IA local para responder preguntas sobre una factura.
+    Endpoint que usa la IA local para responder preguntas sobre facturas.
+    Puede responder sobre la factura actual procesada o sobre facturas anteriores del usuario.
     Requiere autenticación y conoce el usuario actual.
     """
+    # Obtener historial de facturas del usuario para contexto
+    historial = get_user_invoice_history(current_user.id, limit=5)
+    
+    # Determinar qué datos usar para el contexto
+    if req.raw_text and req.data_structured:
+        # Prioridad 1: Usar factura actual si está disponible
+        raw_text = req.raw_text
+        data_estructurada = req.data_structured
+    elif historial and len(historial) > 0:
+        # Prioridad 2: Si no hay factura actual, usar el historial
+        # Construir un contexto combinado de las facturas más recientes
+        textos_ocr = []
+        datos_combinados = []
+        for inv in historial[:3]:
+            # Intentar obtener raw_text de diferentes lugares
+            raw_txt = inv.get('raw_text_ocr') or inv.get('data', {}).get('raw_text') or ''
+            if raw_txt:
+                textos_ocr.append(f"Factura {inv.get('invoice_number', 'N/A')} ({inv.get('supplier', 'N/A')}):\n{raw_txt}")
+            datos_combinados.append(inv.get('data', {}))
+        
+        raw_text = "\n\n---\n\n".join(textos_ocr) if textos_ocr else "Sin texto OCR disponible en el historial."
+        data_estructurada = {
+            "historial_facturas": datos_combinados,
+            "total_facturas": len(historial),
+            "mensaje": "El usuario está preguntando sobre sus facturas anteriores."
+        }
+    else:
+        # No hay facturas disponibles
+        return ChatResponse(
+            answer="No tienes facturas procesadas aún. Por favor, sube y procesa una factura primero para poder hacer preguntas."
+        )
+    
     # Modificar la pregunta para incluir el contexto del usuario
     pregunta_con_usuario = f"[Usuario: {current_user.username}] {req.question}"
     
     answer = responder_pregunta_sobre_factura(
-        raw_text=req.raw_text,
-        data_estructurada=req.data_structured,
+        raw_text=raw_text,
+        data_estructurada=data_estructurada,
         pregunta=pregunta_con_usuario,
+        historial_usuario=historial if historial else None,
     )
     return ChatResponse(answer=answer)
 
@@ -243,11 +311,14 @@ async def process_invoice(
         # OCR
         raw_text = ocr_file(tmp_path)
         
-        # PRIMERO: Intentar extracción con IA (modelo analiza directamente el texto OCR)
+        # Obtener historial de facturas del usuario para contexto
+        historial = get_user_invoice_history(current_user.id, limit=5)
+        
+        # PRIMERO: Intentar extracción con IA (modelo analiza directamente el texto OCR + historial)
         data_from_ia: Optional[Dict[str, Any]] = None
         try:
-            data_from_ia = extraer_datos_con_ia(raw_text)
-            print("✓ Datos extraídos con IA local")
+            data_from_ia = extraer_datos_con_ia(raw_text, historial_usuario=historial if historial else None)
+            print(f"✓ Datos extraídos con IA local (usando {len(historial)} facturas anteriores como contexto)")
         except Exception as e:
             print(f"⚠️ Error extrayendo con IA local: {e}")
             data_from_ia = None
@@ -266,26 +337,30 @@ async def process_invoice(
                 print(f"⚠️ Error refinando con IA local: {e}")
                 data_refined = None
 
+        # Guardar AUTOMÁTICAMENTE toda la información en BD (asociada al usuario)
+        datos_para_guardar = data_refined or data_initial
         saved = False
-        if save_db:
-            datos_para_guardar = data_refined or data_initial
-            try:
-                db = SessionLocal()
-                invoice = Invoice(
-                    invoice_number=str(datos_para_guardar.get("invoice_number") or ""),
-                    supplier=str(datos_para_guardar.get("supplier") or ""),
-                    nit=str(datos_para_guardar.get("nit") or ""),
-                    date=str(datos_para_guardar.get("date") or ""),
-                    subtotal=str(datos_para_guardar.get("subtotal") or ""),
-                    tax=str(datos_para_guardar.get("tax") or ""),
-                    total=str(datos_para_guardar.get("total") or ""),
-                )
-                db.add(invoice)
-                db.commit()
-                db.close()
-                saved = True
-            except Exception as e:
-                print(f"Error guardando en BD: {e}")
+        try:
+            db = SessionLocal()
+            invoice = Invoice(
+                user_id=current_user.id,
+                invoice_number=str(datos_para_guardar.get("invoice_number") or ""),
+                supplier=str(datos_para_guardar.get("supplier") or ""),
+                nit=str(datos_para_guardar.get("nit") or ""),
+                date=str(datos_para_guardar.get("date") or ""),
+                subtotal=str(datos_para_guardar.get("subtotal") or ""),
+                tax=str(datos_para_guardar.get("tax") or ""),
+                total=str(datos_para_guardar.get("total") or ""),
+                data_complete=json.dumps(datos_para_guardar, ensure_ascii=False),
+                raw_text_ocr=raw_text,
+            )
+            db.add(invoice)
+            db.commit()
+            saved = True
+            db.close()
+            print(f"✓ Factura guardada en BD para usuario {current_user.username}")
+        except Exception as e:
+            print(f"⚠️ Error guardando en BD: {e}")
 
         return ProcessInvoiceResponse(
             raw_text=raw_text,

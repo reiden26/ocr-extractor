@@ -51,13 +51,13 @@
         color: var(--fg-muted);
       }
       .main-panel {
-        flex: 2;
+        flex: 1;
         display: flex;
         flex-direction: column;
         gap: 16px;
       }
       .side-panel {
-        flex: 1.2;
+        flex: 1.5;
         min-width: 0;
         display: flex;
         flex-direction: column;
@@ -144,12 +144,13 @@
       }
       .spinner {
         display: inline-block;
-        width: 16px;
-        height: 16px;
+        width: 18px;
+        height: 18px;
         border-radius: 50%;
         border: 2px solid #bbf7d0;
         border-top-color: #16a34a;
         animation: spin 0.7s linear infinite;
+        vertical-align: middle;
       }
       @keyframes spin {
         to {
@@ -299,8 +300,8 @@
   <body>
     <header>
       <div>
-        <h1>Intelli-Invoice Extractor</h1>
-        <span>OCR + IA local sobre facturas, todo en tu máquina</span>
+        <h1>IIE</h1>
+        <span>OCR + IA local sobre facturas</span>
       </div>
       <div style="display: flex; align-items: center; gap: 12px;">
         <span id="user-info" style="font-size: 13px; color: var(--fg-muted);"></span>
@@ -310,8 +311,13 @@
     <main class="app-shell">
       <section class="main-panel">
         <div class="card">
-          <h2>Sube una factura</h2>
-          <p>Formatos soportados: PDF, JPG, JPEG, PNG.</p>
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+            <div>
+              <h2 style="margin: 0;">Sube una factura</h2>
+              <p style="margin: 4px 0 0 0;">Formatos soportados: PDF, JPG, JPEG, PNG.</p>
+            </div>
+            <button id="clear-btn" type="button" onclick="clearFile()" style="display: none; padding: 6px 10px; font-size: 12px; border: 1px solid var(--border); background: transparent; border-radius: 6px; cursor: pointer; color: var(--fg-muted);">✕ Quitar factura</button>
+          </div>
           <div class="upload-area" id="upload-label">
             <input id="file-input" type="file" accept=".pdf,.png,.jpg,.jpeg" />
             <div id="upload-placeholder" style="font-size: 14px; margin-bottom: 4px">
@@ -319,7 +325,6 @@
             </div>
             <div id="file-selected" style="display: none; font-size: 14px; margin-bottom: 4px; font-weight: 500;">
               <span id="file-name"></span>
-              <button type="button" onclick="clearFile()" style="margin-left: 8px; padding: 2px 6px; font-size: 11px; border: 1px solid var(--border); background: transparent; border-radius: 4px; cursor: pointer; color: var(--fg-muted);">✕</button>
             </div>
             <div style="font-size: 12px; color: var(--fg-muted)">
               Límite 200MB por archivo · Procesado localmente
@@ -333,6 +338,25 @@
           </div>
         </div>
 
+        <div class="card">
+          <h2>Texto OCR</h2>
+          <p>Fragmento del texto OCR completo.</p>
+          <div id="ocr-preview" class="json-view"></div>
+        </div>
+        
+        <div class="card">
+          <div style="display: flex; justify-content: space-between; align-items: center; cursor: pointer;" onclick="toggleJsonView()">
+            <h2 style="margin: 0;">JSON estructurado</h2>
+            <span id="json-toggle-icon" style="font-size: 14px; color: var(--fg-muted);">▼</span>
+          </div>
+          <div id="json-container" style="display: none; margin-top: 12px;">
+            <p style="margin-bottom: 8px;">Vista del JSON refinado inicial.</p>
+            <div id="json-view" class="json-view">{}</div>
+          </div>
+        </div>
+      </section>
+
+      <aside class="side-panel">
         <div class="card">
           <h2>Datos clave</h2>
           <div id="metrics" class="metrics-grid">
@@ -355,31 +379,18 @@
             <div id="extra-metrics" style="grid-column: 1 / -1; display: flex; flex-direction: column; gap: 4px; margin-top: 4px;"></div>
           </div>
         </div>
-      </section>
-
-      <aside class="side-panel">
-        <div class="card">
-          <h2>JSON estructurado</h2>
-          <p>Vista del JSON refinado (si está disponible) o inicial.</p>
-          <div id="json-view" class="json-view">{}</div>
-        </div>
-        <div class="card">
-          <h2>Texto OCR</h2>
-          <p>Fragmento del texto OCR completo.</p>
-          <div id="ocr-preview" class="json-view"></div>
-        </div>
       </aside>
     </main>
 
     <!-- Chat flotante -->
     <div id="chat-window" class="chat-window">
       <div class="chat-header">
-        <span>💬 Intelli-Invoice</span>
+        <span>💬 IIE</span>
         <button onclick="toggleChat(false)">✕</button>
       </div>
       <div id="chat-messages" class="chat-messages">
         <div class="msg-bot">
-          Estoy listo para responder preguntas sobre la última factura procesada.
+          Estoy listo para responder preguntas sobre tus facturas. Puedo hablar sobre la factura actual o sobre facturas anteriores que hayas procesado.
         </div>
       </div>
       <div class="chat-input">
@@ -431,10 +442,37 @@
       let lastDataRefined = null;
 
       function clearFile() {
+        // Limpiar archivo
         fileInput.value = "";
         document.getElementById("upload-placeholder").style.display = "block";
         document.getElementById("file-selected").style.display = "none";
+        document.getElementById("clear-btn").style.display = "none";
         processBtn.disabled = true;
+        
+        // Limpiar estado de procesamiento
+        lastRawText = null;
+        lastDataInitial = null;
+        lastDataRefined = null;
+        
+        // Limpiar datos clave básicos
+        document.getElementById("m-invoice").textContent = "—";
+        document.getElementById("m-date").textContent = "—";
+        document.getElementById("m-supplier").textContent = "—";
+        document.getElementById("m-total").textContent = "—";
+        
+        // Limpiar métricas extra
+        const extraContainer = document.getElementById("extra-metrics");
+        if (extraContainer) {
+          extraContainer.innerHTML = "";
+        }
+        
+        // Limpiar JSON y OCR
+        jsonView.textContent = "{}";
+        ocrPreview.textContent = "";
+        
+        // Limpiar estado
+        statusEl.textContent = "";
+        statusEl.className = "status";
       }
 
       fileInput.addEventListener("change", () => {
@@ -446,9 +484,11 @@
           document.getElementById("upload-placeholder").style.display = "none";
           document.getElementById("file-selected").style.display = "block";
           document.getElementById("file-name").textContent = fileName;
+          document.getElementById("clear-btn").style.display = "block";
         } else {
           document.getElementById("upload-placeholder").style.display = "block";
           document.getElementById("file-selected").style.display = "none";
+          document.getElementById("clear-btn").style.display = "none";
         }
       });
 
@@ -456,14 +496,16 @@
         if (!fileInput.files.length) return;
         const file = fileInput.files[0];
 
-        statusEl.className = "status";
-        statusEl.innerHTML = '<span class="spinner"></span>';
+        // Mostrar spinner
+        if (statusEl) {
+          statusEl.className = "status";
+          statusEl.innerHTML = '<span class="spinner"></span>';
+        }
         processBtn.disabled = true;
 
         const form = new FormData();
         form.append("file", file);
         form.append("refine", "true");
-        form.append("save_db", "false");
 
         try {
           const resp = await fetch("/api/process-invoice", {
@@ -502,42 +544,48 @@
 
           // Métricas extra dinámicas basadas en lo que devuelva el modelo
           const extraContainer = document.getElementById("extra-metrics");
-          extraContainer.innerHTML = "";
-          const mainKeys = ["invoice_number", "date", "supplier", "total", "raw_text"];
-          Object.entries(toShow).forEach(([key, value]) => {
-            if (value === null || value === "" || mainKeys.includes(key)) return;
-            // Evitar duplicar la fecha si ya está en la parte superior
-            if (key === "billing_period" && toShow.date) return;
+          if (extraContainer) {
+            extraContainer.innerHTML = "";
+            const mainKeys = ["invoice_number", "date", "supplier", "total", "raw_text"];
+            Object.entries(toShow).forEach(([key, value]) => {
+              if (value === null || value === "" || mainKeys.includes(key)) return;
+              // Evitar duplicar la fecha si ya está en la parte superior
+              if (key === "billing_period" && toShow.date) return;
 
-            const row = document.createElement("div");
-            row.style.display = "flex";
-            row.style.justifyContent = "space-between";
-            row.style.gap = "8px";
+              const row = document.createElement("div");
+              row.style.display = "flex";
+              row.style.justifyContent = "space-between";
+              row.style.gap = "8px";
 
-            const label = document.createElement("div");
-            label.className = "metric-label";
-            const niceKey =
-              metricLabelsEs[key] ||
-              key
-                .replace(/_/g, " ")
-                .replace(/\b\w/g, (c) => c.toUpperCase());
-            label.textContent = niceKey;
+              const label = document.createElement("div");
+              label.className = "metric-label";
+              const niceKey =
+                metricLabelsEs[key] ||
+                key
+                  .replace(/_/g, " ")
+                  .replace(/\b\w/g, (c) => c.toUpperCase());
+              label.textContent = niceKey;
 
-            const val = document.createElement("div");
-            val.className = "metric-value";
-            val.textContent = String(value);
+              const val = document.createElement("div");
+              val.className = "metric-value";
+              val.textContent = String(value);
 
-            row.appendChild(label);
-            row.appendChild(val);
-            extraContainer.appendChild(row);
-          });
+              row.appendChild(label);
+              row.appendChild(val);
+              extraContainer.appendChild(row);
+            });
+          }
 
-          statusEl.className = "status ok";
-          statusEl.innerHTML = "<span class='success-icon'>✓</span>";
+          if (statusEl) {
+            statusEl.className = "status ok";
+            statusEl.innerHTML = "<span class='success-icon'>✓</span>";
+          }
         } catch (e) {
           console.error(e);
-          statusEl.className = "status error";
-          statusEl.innerHTML = "⚠️";
+          if (statusEl) {
+            statusEl.className = "status error";
+            statusEl.innerHTML = "⚠️";
+          }
         } finally {
           processBtn.disabled = false;
         }
@@ -559,13 +607,7 @@
       async function sendChat() {
         const q = chatInput.value.trim();
         if (!q) return;
-        if (!lastRawText || !lastDataInitial) {
-          appendChat(
-            "Primero procesa una factura para poder hacer preguntas.",
-            "msg-bot"
-          );
-          return;
-        }
+        
         appendChat(q, "msg-user");
         chatInput.value = "";
         try {
@@ -578,8 +620,8 @@
             },
             body: JSON.stringify({
               question: q,
-              raw_text: lastRawText,
-              data_structured: lastDataRefined || lastDataInitial,
+              raw_text: lastRawText || null,
+              data_structured: (lastDataRefined || lastDataInitial) || null,
             }),
           });
           if (!resp.ok) {
@@ -603,6 +645,18 @@
           sendChat();
         }
       });
+
+      function toggleJsonView() {
+        const container = document.getElementById("json-container");
+        const icon = document.getElementById("json-toggle-icon");
+        if (container.style.display === "none") {
+          container.style.display = "block";
+          icon.textContent = "▲";
+        } else {
+          container.style.display = "none";
+          icon.textContent = "▼";
+        }
+      }
 
       // --- Utilidades para etiquetas en español de métricas extra ---
       const metricLabelsEs = {
